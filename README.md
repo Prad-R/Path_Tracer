@@ -1,4 +1,4 @@
-# Ray Tracer
+# Path Tracer
 A C++ program for ray tracing.
 
 ## References
