@@ -129,7 +129,7 @@ Vec radiance(const Ray &r, int depth, unsigned short *Xi){ // *Xi is the pointer
     const Sphere &obj = spheres[id]; // The object hit by the ray
     Vec x = r.o + r.d * t; // The intersection point
     Vec n = (x - obj.p).norm(); // Normal vector at the intersection
-    Vec n1 = n.dot(r.d) < 0 ? n : n * -1; // Ensuring the normal vector makes outwards from the object
+    Vec nl = n.dot(r.d) < 0 ? n : n * -1; // Ensuring the normal vector makes outwards from the object
     Vec f = obj.c; // Surface color of the object
     double p = f.x > f.y && f.x > f.z ? f.x : f.y > f.z ? f.y : f.z; // Max reflection coefficient
 
@@ -146,7 +146,7 @@ Vec radiance(const Ray &r, int depth, unsigned short *Xi){ // *Xi is the pointer
         double r2 = erand48(Xi); // cosine-weighted distribution of driections used to simulate more likely reflections along direction closer to normal.
         double r2s = sqrt(r2); // Square root of r2
 
-        Vec w = n1; // Corrected surface normal
+        Vec w = nl; // Corrected surface normal
         Vec u = (fabs(w.x) > 0.1 ? Vec(0, 1) : Vec (1))%w.norm(); // u is a 2D tangent vector to n1. The condition checks if w is parallel to the y-axis.
         Vec v = w%u; // Bitangent vector perpendicular to both u and w
         Vec d = (u * cos(r1) * r2s + v * sin(r1) * r2s + w * sqrt(1 - r2)).norm(); // Random reflected direction following a cosine-weighted distribution
@@ -157,13 +157,13 @@ Vec radiance(const Ray &r, int depth, unsigned short *Xi){ // *Xi is the pointer
 
     // Ideal specular reflection
     else if (obj.refl == SPEC){
-        return obj.e + f.mult(radiance(Ray(x, r.d - n1 * 2 * n1.dot(r.d)), depth, Xi));
+        return obj.e + f.mult(radiance(Ray(x, r.d - n * 2 * n.dot(r.d)), depth, Xi));
     }
 
     // Ideal Dielectric Refraction
-    Ray reflRay(x, r.d - n1 * 2 * n1.dot(r.d));
-    bool into = n.dot(n1)> 0; // Checking if the normal and corrected normal are pointing in the same way
-    double nc = 1, nt = 1.5, nnt = into ? nc / nt : nt / nc, ddn = r.d.dot(n1), cos2t;
+    Ray reflRay(x, r.d - n * 2 * n.dot(r.d));
+    bool into = n.dot(nl) > 0; // Checking if the normal and corrected normal are pointing in the same way
+    double nc = 1, nt = 1.5, nnt = into ? nc / nt : nt / nc, ddn = r.d.dot(nl), cos2t;
     // nc is the mu of medium 1. nt is the mu of medium 2. nnt is the ratio of refractive indices depending on whether the light is going in or out.
     // ddn is the cosine of the angle between the ray and the correct normal
     
@@ -176,8 +176,8 @@ Vec radiance(const Ray &r, int depth, unsigned short *Xi){ // *Xi is the pointer
     double Re = RO + (1 - RO) * c * c * c * c * c, Tr = 1 - Re, P = 0.25 + 0.5 * Re, RP = Re / P, TP = Tr / (1 - P); 
     // Fresnel equation to determine coefficients of reflection and transmission
     // RP and TP are reflection and transmission probabilities
-    return obj.e + f.mult(depth > 2 ? (erand48(Xi) < P ? radiance(reflRay, depth, Xi) * RP : radiance(Ray(x, tdir), depth, Xi) * TP) : radiance(reflRay, depth, Xi) * Re + radiance(Ray(x, tdir), depth, Xi) + Tr); 
-    // For more than two recursions, there is a Russian roulettet terminate either the reflected or transmitted ray.
+    return obj.e + f.mult(depth > 2 ? (erand48(Xi) < P ? radiance(reflRay, depth, Xi) * RP : radiance(Ray(x, tdir), depth, Xi) * TP) : radiance(reflRay, depth, Xi) * Re + radiance(Ray(x, tdir), depth, Xi) * Tr); 
+    // For more than two recursions, there is a Russian roulette terminate either the reflected or transmitted ray.
     // For less than two recursions, the new ray is simply a linear combination of the reflected and transmitted rays.
 }
 
