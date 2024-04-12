@@ -97,7 +97,7 @@ Sphere spheres[] = {// Array of spheres to set the scene
     Sphere(1e5, Vec(50,-1e5+81.6,81.6),Vec(),Vec(.75,.75,.75),DIFF),//Top 
     Sphere(16.5,Vec(27,16.5,47),       Vec(),Vec(1,1,1)*.999, SPEC),//Mirror 
     Sphere(16.5,Vec(73,16.5,78),       Vec(),Vec(1,1,1)*.999, REFR),//Glass 
-    Sphere(600, Vec(50,681.6-.27,81.6),Vec(12,12,12),  Vec(), DIFF) //Light
+    Sphere(600, Vec(50,681.6 -0.27,81.6),Vec(12,12,12),  Vec(), DIFF) //Light
 };
 
 inline double clamp(double x) {return x < 0 ? 0 : x > 1 ? 1 : x;} // Function essentially bounds values into [0,1]
@@ -133,7 +133,7 @@ Vec radiance(const Ray &r, int depth, unsigned short *Xi){ // *Xi is the pointer
     Vec f = obj.c; // Surface color of the object
     double p = f.x > f.y && f.x > f.z ? f.x : f.y > f.z ? f.y : f.z; // Max reflection coefficient
 
-    // Russian Roulette : randomly terminating rays to avoid infinite recursion
+    // Russian roulette : randomly terminating rays to avoid infinite recursion
     if (++depth > 5) // If depth of recursion (number of reflections or refractions) exceeds a number, terminate the ray early
         if (erand48(Xi) < p)
             f = f * (1 / p); // If the randomg number is < p, the ray's intensity is scaled 1/p to conserve energy by compensating for early termination.
@@ -147,8 +147,8 @@ Vec radiance(const Ray &r, int depth, unsigned short *Xi){ // *Xi is the pointer
         double r2s = sqrt(r2); // Square root of r2
 
         Vec w = n1; // Corrected surface normal
-        Vec u = (fabs(w.x) > 0.1 ? Vec(0, 1) : Vec (1)).%w.norm(); // u is a 2D tangent vector to n1. The condition checks if w is parallel to the y-axis.
-        Vec v = w.%u; // Bitangent vector perpendicular to both u and w
+        Vec u = (fabs(w.x) > 0.1 ? Vec(0, 1) : Vec (1))%w.norm(); // u is a 2D tangent vector to n1. The condition checks if w is parallel to the y-axis.
+        Vec v = w%u; // Bitangent vector perpendicular to both u and w
         Vec d = (u * cos(r1) * r2s + v * sin(r1) * r2s + w * sqrt(1 - r2)).norm(); // Random reflected direction following a cosine-weighted distribution
         // Note that the direction of the reflected ray is basically a linear combination of u, v and w.
 
@@ -177,6 +177,51 @@ Vec radiance(const Ray &r, int depth, unsigned short *Xi){ // *Xi is the pointer
     // Fresnel equation to determine coefficients of reflection and transmission
     // RP and TP are reflection and transmission probabilities
     return obj.e + f.mult(depth > 2 ? (erand48(Xi) < P ? radiance(reflRay, depth, Xi) * RP : radiance(Ray(x, tdir), depth, Xi) * TP) : radiance(reflRay, depth, Xi) * Re + radiance(Ray(x, tdir), depth, Xi) + Tr); 
-    // For more than two recursions, the RP and TP are used to scale the next ray's contribution.
+    // For more than two recursions, there is a Russian roulettet terminate either the reflected or transmitted ray.
     // For less than two recursions, the new ray is simply a linear combination of the reflected and transmitted rays.
+}
+
+int main(int argc, char *argv[]){
+    int w = 1024, h = 768, samps = argc == 2 ? atoi(argv[1]) / 4 : 1; // Number of samples per pixel and dimensions of the image.
+    // atoi("12345") returns 12345. Converts string numbers to numbers. 
+    // samps has a /4 as each pixel is divided into a 2x2 grid of subpixels to enable supersampling, an anti-aliasing technique.
+
+    Ray cam(Vec(50, 52, 295.6), Vec(0, -0.042612, -1).norm()); // Camera position and direction
+    Vec cx = Vec(w * 0.5135 / h), cy = (cx % cam.d).norm() * 0.5315, r, *c = new Vec[w * h];
+    // cx is the x-axis of the camera. cy is the y-axis of the camera which is the cross product of cx and direction of the camera.
+    // r is used to obtain radiance value of a particular pixel. c is a pointer to an array of vectors. There is 1 color vector for each pixel.
+    // "new" is used the mention that the memory to c is allocated dynamically.
+
+#pragma omp parallel for schedule(dynamic, 1) private(r)
+// a compiler directive to use OpenMP that will parallelise the following loops by dynamically allocating one interation to a thread at any time.
+// private(r) means that each thread has it's own private copy of r to avoid data conflicts when multiple threads are operating on r.
+
+    for (unsigned short y = 0; y < h; y++){
+        fprintf(stderr, "\rRendering (%d spp) %5.2f%%", samps * 4, 100.0 * y / (h - 1));
+        // %5.2f%% says that each number has at least 5 characters (with spaces padded to the left) and 2 digits after the decimal point.
+
+        for (unsigned short x = 0, Xi[3] = {0, 0, y}; x < w; x++)
+            for (int sy = 0, i = (h - y -1) * w + x; sy < 2; sy++) // 2x2 subpixel rows
+                for (int sx = 0; sx < 2; sx++, r = Vec()){ // r is reset to 0 at the beginning of each subpixel to obtain radiance of each subpizel.
+                    for (int s = 0; s < samps; s++){
+                        double r1 = 2 * erand48(Xi), dx = r1 < 1 ? sqrt(r1) - 1 : 1 - sqrt(2 - r1);
+                        double r2 = 2 * erand48(Xi), dy = r2 < 1 ? sqrt(r2) - 1 : 1 - sqrt(2 - r2);
+                        // Introduce random offsets dx and dy within the subpixel. Called Jittered sampling, anti-aliasing
+
+                        Vec d = cx * (((sx + 0.5 + dx) / 2 + x) / w - 0.5) + cy * (((sy + 0.5 + dy) / 2 + y) / h - 0.5) + cam.d;
+                        // Adjusts the direction of the camera by considering the camera to look exactly at the direction at the point from within the subpixel
+                        // from which the sampling is done from. / w and / h are done to normalize to [0,1]. - 0.5 is then performed to make sure centre of 
+                        // each subpixel is (0,0).
+
+                        r = r + radiance(Ray(cam.o + d * 140, d.norm()), 0, Xi) * (1.0 / samps);
+                        // Radiance accumulation. Dividing by samps to normalize the color obtained.
+                    }
+                    c[i] = c[i] + Vec(clamp(r.x), clamp(r.y), clamp(r.z)) * 0.25;
+                }
+    }
+
+    FILE *f = fopen("image.ppm", "w"); // Writing image to ppm file
+    fprintf(f, "P3\n%d %d\n%d\n", w, h, 255);
+    for (int i = 0; i < w * h; i++)
+        fprintf(f, "%d %d %d ", toInt(c[i].x), toInt(c[i].y), toInt(c[i].z));
 }
